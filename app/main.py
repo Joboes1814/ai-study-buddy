@@ -18,13 +18,16 @@ from retrieval import (
 from ai_service import (
     generate_grounded_answer,
     generate_document_overview,
+    generate_study_tool,
+    generate_flashcards,
+    generate_quiz,
     api_key_available,
     DEFAULT_MODEL,
 )
 
 
 # =========================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -49,18 +52,18 @@ if "document_name" not in st.session_state:
 
 
 # =========================================================
-# HELPER FUNCTIONS
+# HELPERS
 # =========================================================
 
-def is_document_overview_question(question):
-    """
-    Detect questions asking about the uploaded
-    document as a whole.
-    """
+def is_document_overview_question(
+    question
+):
 
-    question = question.lower().strip()
+    question = (
+        question.lower().strip()
+    )
 
-    overview_phrases = [
+    phrases = [
         "what is this document about",
         "what is the document about",
         "what is this document for",
@@ -80,8 +83,295 @@ def is_document_overview_question(question):
 
     return any(
         phrase in question
-        for phrase in overview_phrases
+        for phrase in phrases
     )
+
+
+def study_mode_description(
+    mode
+):
+
+    descriptions = {
+
+        "Ask Question":
+            "Ask a direct question and receive "
+            "a source-grounded explanation.",
+
+        "Hint Mode":
+            "Receive guidance without immediately "
+            "being given the answer.",
+
+        "Explain Simply":
+            "Turn difficult material into a clear, "
+            "student-friendly explanation.",
+
+        "Quiz Me":
+            "Test yourself before revealing "
+            "the correct answers.",
+
+        "Flashcards":
+            "Study important ideas with interactive "
+            "front-and-back cards.",
+
+        "Check My Understanding":
+            "Explain a concept in your own words "
+            "and receive grounded feedback.",
+    }
+
+    return descriptions[mode]
+
+
+def input_placeholder(
+    mode
+):
+
+    placeholders = {
+
+        "Ask Question":
+            "Ask a question about your study material...",
+
+        "Hint Mode":
+            "Enter a question you want hints for...",
+
+        "Explain Simply":
+            "What concept should I explain simply?",
+
+        "Quiz Me":
+            "What topic would you like to be quizzed on?",
+
+        "Flashcards":
+            "What topic should the flashcards cover?",
+
+        "Check My Understanding":
+            "Explain a concept in your own words...",
+    }
+
+    return placeholders[mode]
+
+
+# =========================================================
+# FLASHCARD RENDERER
+# =========================================================
+
+def render_flashcards(
+    cards,
+    key_prefix,
+):
+
+    if not cards:
+
+        st.warning(
+            "No flashcards could be created "
+            "from the retrieved material."
+        )
+
+        return
+
+
+    st.markdown(
+        "### 🗂️ Study Flashcards"
+    )
+
+    st.caption(
+        "Try answering each card before "
+        "revealing the back."
+    )
+
+
+    for index in range(
+        0,
+        len(cards),
+        2,
+    ):
+
+        columns = st.columns(
+            2,
+            gap="medium",
+        )
+
+
+        for offset in range(2):
+
+            card_index = (
+                index + offset
+            )
+
+
+            if card_index >= len(cards):
+                continue
+
+
+            card = (
+                cards[
+                    card_index
+                ]
+            )
+
+
+            with columns[offset]:
+
+                with st.container(
+                    border=True
+                ):
+
+                    st.caption(
+                        f"FLASHCARD "
+                        f"{card_index + 1}"
+                    )
+
+                    st.markdown(
+                        f"### {card['front']}"
+                    )
+
+                    st.write("")
+
+
+                    with st.expander(
+                        "👁️ Reveal answer",
+                        expanded=False,
+                        key=(
+                            f"{key_prefix}_"
+                            f"card_{card_index}"
+                        ),
+                    ):
+
+                        st.markdown(
+                            card[
+                                "back"
+                            ]
+                        )
+
+                        st.divider()
+
+                        st.caption(
+                            f"📚 Source "
+                            f"{card['source_number']} "
+                            f"· Page "
+                            f"{card['page']}"
+                        )
+
+
+# =========================================================
+# QUIZ RENDERER
+# =========================================================
+
+def render_quiz(
+    questions,
+    key_prefix,
+):
+
+    if not questions:
+
+        st.warning(
+            "No quiz questions could be created "
+            "from the retrieved material."
+        )
+
+        return
+
+
+    st.markdown(
+        "### 📝 Your Quiz"
+    )
+
+    st.caption(
+        "Think through each question before "
+        "revealing the answer."
+    )
+
+
+    for index, item in enumerate(
+        questions
+    ):
+
+        with st.container(
+            border=True
+        ):
+
+            st.caption(
+                f"QUESTION {index + 1}"
+            )
+
+            st.markdown(
+                f"### {item['question']}"
+            )
+
+
+            with st.expander(
+                "✅ Check answer",
+                expanded=False,
+                key=(
+                    f"{key_prefix}_"
+                    f"quiz_{index}"
+                ),
+            ):
+
+                st.markdown(
+                    item[
+                        "answer"
+                    ]
+                )
+
+                st.divider()
+
+                st.caption(
+                    f"📚 Source "
+                    f"{item['source_number']} "
+                    f"· Page "
+                    f"{item['page']}"
+                )
+
+
+# =========================================================
+# SUPPORTING EVIDENCE
+# =========================================================
+
+def render_sources(
+    results,
+    explanation_enabled,
+):
+
+    if not results:
+        return
+
+
+    with st.expander(
+        "📚 View supporting evidence"
+    ):
+
+        for number, result in enumerate(
+            results,
+            start=1,
+        ):
+
+            similarity = (
+                result["score"]
+                * 100
+            )
+
+            st.markdown(
+                f"**Source {number} "
+                f"· Page {result['page']} "
+                f"· Similarity "
+                f"{similarity:.1f}%**"
+            )
+
+            st.write(
+                result["text"]
+            )
+
+            if explanation_enabled:
+
+                st.caption(
+                    "This passage was selected "
+                    "because the retrieval system "
+                    "identified textual similarity "
+                    "with the learner's request."
+                )
+
+            if number < len(results):
+
+                st.divider()
 
 
 # =========================================================
@@ -94,16 +384,50 @@ with st.sidebar:
         "🧠 Study Controls"
     )
 
-    st.write(
-        "Customize how AI Study Buddy supports your learning."
+    st.caption(
+        "You decide how AI supports "
+        "your learning."
     )
 
     st.divider()
 
 
     # -----------------------------------------------------
-    # ANSWER SETTINGS
+    # STUDY MODE
     # -----------------------------------------------------
+
+    st.subheader(
+        "🎯 Study Mode"
+    )
+
+    study_mode = st.selectbox(
+        "How would you like to learn?",
+        [
+            "Ask Question",
+            "Hint Mode",
+            "Explain Simply",
+            "Quiz Me",
+            "Flashcards",
+            "Check My Understanding",
+        ],
+    )
+
+    st.caption(
+        study_mode_description(
+            study_mode
+        )
+    )
+
+
+    # -----------------------------------------------------
+    # RESPONSE CONTROLS
+    # -----------------------------------------------------
+
+    st.divider()
+
+    st.subheader(
+        "⚙️ Learning Preferences"
+    )
 
     answer_depth = st.selectbox(
         "Answer style",
@@ -115,18 +439,15 @@ with st.sidebar:
         index=1,
     )
 
-
     explanation_enabled = st.toggle(
         "Explain source selection",
         value=True,
     )
 
-
     sources_enabled = st.toggle(
         "Show supporting sources",
         value=True,
     )
-
 
     top_k = st.slider(
         "Number of source passages",
@@ -137,7 +458,7 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # STUDY MATERIAL
+    # DOCUMENT
     # -----------------------------------------------------
 
     st.divider()
@@ -145,7 +466,6 @@ with st.sidebar:
     st.subheader(
         "📄 Study Material"
     )
-
 
     uploaded_file = st.file_uploader(
         "Upload PDF or TXT",
@@ -175,24 +495,21 @@ with st.sidebar:
                         )
                     )
 
-
-                st.session_state.document = document
+                st.session_state.document = (
+                    document
+                )
 
                 st.session_state.document_name = (
                     uploaded_file.name
                 )
 
-
             except Exception as error:
 
                 st.error(
-                    f"Unable to process document: {error}"
+                    f"Unable to process document: "
+                    f"{error}"
                 )
 
-
-    # -----------------------------------------------------
-    # DOCUMENT STATUS
-    # -----------------------------------------------------
 
     if st.session_state.document:
 
@@ -200,12 +517,10 @@ with st.sidebar:
             st.session_state.document
         )
 
-
         st.success(
             f"Loaded: "
             f"{st.session_state.document_name}"
         )
-
 
         st.caption(
             f"{document['page_count']} page(s)"
@@ -218,33 +533,11 @@ with st.sidebar:
             "Preview extracted text"
         ):
 
-            if document["full_text"]:
-
-                preview = (
-                    document["full_text"][:3000]
-                )
-
-                st.text(
-                    preview
-                )
-
-
-                if (
-                    len(document["full_text"])
-                    > 3000
-                ):
-
-                    st.caption(
-                        "Preview limited to the first "
-                        "3,000 characters."
-                    )
-
-
-            else:
-
-                st.warning(
-                    "No readable text was extracted."
-                )
+            st.text(
+                document[
+                    "full_text"
+                ][:3000]
+            )
 
 
         if st.button(
@@ -254,6 +547,7 @@ with st.sidebar:
 
             st.session_state.document = None
             st.session_state.document_name = None
+            st.session_state.messages = []
 
             st.rerun()
 
@@ -276,9 +570,9 @@ with st.sidebar:
         )
 
         st.caption(
-            f"Model: {DEFAULT_MODEL}"
+            f"Model: "
+            f"{DEFAULT_MODEL}"
         )
-
 
     else:
 
@@ -288,7 +582,7 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # RESEARCH MODE
+    # RESEARCH
     # -----------------------------------------------------
 
     st.divider()
@@ -298,23 +592,24 @@ with st.sidebar:
     )
 
     st.caption(
-        "Studying how transparency and source "
-        "grounding influence trust and perceived usefulness."
+        "Studying transparency, trust, "
+        "usefulness, and learner agency."
     )
 
-    st.info(
-        RESEARCH_QUESTION
-    )
+    with st.expander(
+        "Research question"
+    ):
 
+        st.write(
+            RESEARCH_QUESTION
+        )
 
-    # -----------------------------------------------------
-    # CLEAR CHAT
-    # -----------------------------------------------------
 
     st.divider()
 
+
     if st.button(
-        "Clear Conversation",
+        "🗑️ Clear Conversation",
         use_container_width=True,
     ):
 
@@ -324,7 +619,7 @@ with st.sidebar:
 
 
 # =========================================================
-# MAIN HEADER
+# HEADER
 # =========================================================
 
 st.title(
@@ -346,45 +641,54 @@ st.warning(
 
 
 # =========================================================
-# STATUS
+# STATUS AREA
 # =========================================================
 
-status1, status2, status3 = st.columns(3)
+status1, status2, status3, status4 = (
+    st.columns(
+        4,
+        gap="medium",
+    )
+)
 
 
 with status1:
 
     st.metric(
         "Development Stage",
-        "Milestone 5",
+        "Milestone 7",
     )
 
 
 with status2:
 
-    ai_status = (
-        "Grounded AI"
-        if api_key_available()
-        else "Not Connected"
-    )
-
     st.metric(
         "AI Mode",
-        ai_status,
+        (
+            "Grounded AI"
+            if api_key_available()
+            else "Not Connected"
+        ),
     )
 
 
 with status3:
 
-    document_status = (
-        "Ready"
-        if st.session_state.document
-        else "No Document"
-    )
-
     st.metric(
         "Study Material",
-        document_status,
+        (
+            "Ready"
+            if st.session_state.document
+            else "No Document"
+        ),
+    )
+
+
+with status4:
+
+    st.metric(
+        "Study Mode",
+        study_mode,
     )
 
 
@@ -392,43 +696,62 @@ st.divider()
 
 
 # =========================================================
-# INTRODUCTION
+# MODE PANEL
 # =========================================================
 
-if not st.session_state.messages:
+with st.container(
+    border=True
+):
 
     st.markdown(
-        """
-        ### Grounded AI Learning Is Active 🤖📚
+        f"## 🎯 {study_mode}"
+    )
 
-        AI Study Buddy can now:
-
-        - Read uploaded PDF and TXT study materials
-        - Identify relevant passages
-        - Generate explanations grounded in those passages
-        - Cite supporting evidence
-        - Explain why sources were selected
-        - Summarize the uploaded document
-        - Refuse questions that are unsupported by the material
-
-        The current workflow is:
-
-        **Question → Retrieval → Evidence → Grounded AI Answer**
-
-        For document-level questions such as:
-
-        *"What is this document about?"*
-
-        Study Buddy analyzes the document as a whole.
-
-        For specific questions, Study Buddy retrieves relevant
-        passages before generating an answer.
-        """
+    st.write(
+        study_mode_description(
+            study_mode
+        )
     )
 
 
+    if study_mode == "Flashcards":
+
+        st.info(
+            "Try to answer each card yourself "
+            "before revealing the back."
+        )
+
+
+    elif study_mode == "Quiz Me":
+
+        st.info(
+            "Answers stay hidden until you choose "
+            "to reveal them."
+        )
+
+
+    elif study_mode == "Hint Mode":
+
+        st.info(
+            "Study Buddy will guide you with "
+            "progressive hints instead of immediately "
+            "giving you the answer."
+        )
+
+
+    elif study_mode == (
+        "Check My Understanding"
+    ):
+
+        st.info(
+            "Explain the concept in your own words. "
+            "Study Buddy will compare your explanation "
+            "with your uploaded material."
+        )
+
+
 # =========================================================
-# CURRENT DOCUMENT
+# DOCUMENT STATUS
 # =========================================================
 
 if st.session_state.document:
@@ -437,47 +760,104 @@ if st.session_state.document:
         st.session_state.document
     )
 
-    st.info(
-        f"📄 Current study material: "
-        f"**{st.session_state.document_name}** "
+    st.success(
+        f"📄 **{st.session_state.document_name}** "
         f"· {document['page_count']} page(s)"
     )
+
+else:
+
+    st.info(
+        "Upload study material from the "
+        "sidebar to begin."
+    )
+
+
+st.divider()
 
 
 # =========================================================
 # CHAT HISTORY
 # =========================================================
 
-for message in st.session_state.messages:
+for message_index, message in enumerate(
+    st.session_state.messages
+):
 
     with st.chat_message(
         message["role"]
     ):
 
-        st.markdown(
-            message["content"]
+        message_type = (
+            message.get(
+                "type",
+                "text",
+            )
         )
+
+
+        if message_type == "flashcards":
+
+            render_flashcards(
+                message["cards"],
+                key_prefix=(
+                    f"history_"
+                    f"{message_index}"
+                ),
+            )
+
+
+        elif message_type == "quiz":
+
+            render_quiz(
+                message["questions"],
+                key_prefix=(
+                    f"history_"
+                    f"{message_index}"
+                ),
+            )
+
+
+        else:
+
+            if (
+                message["role"]
+                == "assistant"
+                and message.get("mode")
+            ):
+
+                st.caption(
+                    f"Study mode: "
+                    f"{message['mode']}"
+                )
+
+            st.markdown(
+                message["content"]
+            )
 
 
 # =========================================================
 # CHAT INPUT
 # =========================================================
 
-question = st.chat_input(
-    "Ask a question about your study material..."
+student_input = st.chat_input(
+    input_placeholder(
+        study_mode
+    )
 )
 
 
-if question:
+if student_input:
 
     # -----------------------------------------------------
-    # SAVE USER QUESTION
+    # USER MESSAGE
     # -----------------------------------------------------
 
     st.session_state.messages.append(
         {
             "role": "user",
-            "content": question,
+            "type": "text",
+            "content": student_input,
         }
     )
 
@@ -487,26 +867,25 @@ if question:
     ):
 
         st.markdown(
-            question
+            student_input
         )
 
 
-    # Default values used later
     results = []
+
     answer = ""
 
 
     # =====================================================
-    # REQUIRE DOCUMENT
+    # NO DOCUMENT
     # =====================================================
 
     if not st.session_state.document:
 
         answer = (
-            "📄 Please upload a PDF or TXT study document "
-            "before asking a source-grounded question."
+            "📄 Please upload a PDF or TXT "
+            "study document first."
         )
-
 
         with st.chat_message(
             "assistant"
@@ -516,18 +895,26 @@ if question:
                 answer
             )
 
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "type": "text",
+                "content": answer,
+                "mode": study_mode,
+            }
+        )
+
 
     # =====================================================
-    # REQUIRE OPENAI CONNECTION
+    # NO API
     # =====================================================
 
     elif not api_key_available():
 
         answer = (
-            "🔑 The OpenAI API is not connected. "
-            "Please configure OPENAI_API_KEY."
+            "🔑 The OpenAI API "
+            "is not connected."
         )
-
 
         with st.chat_message(
             "assistant"
@@ -537,13 +924,25 @@ if question:
                 answer
             )
 
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "type": "text",
+                "content": answer,
+                "mode": study_mode,
+            }
+        )
+
 
     # =====================================================
-    # DOCUMENT OVERVIEW QUESTION
+    # DOCUMENT OVERVIEW
     # =====================================================
 
-    elif is_document_overview_question(
-        question
+    elif (
+        study_mode == "Ask Question"
+        and is_document_overview_question(
+            student_input
+        )
     ):
 
         try:
@@ -556,9 +955,13 @@ if question:
                     generate_document_overview(
                         document_text=(
                             st.session_state
-                            .document["full_text"]
+                            .document[
+                                "full_text"
+                            ]
                         ),
-                        answer_depth=answer_depth,
+                        answer_depth=(
+                            answer_depth
+                        ),
                     )
                 )
 
@@ -575,37 +978,27 @@ if question:
                     answer
                 )
 
-                st.markdown("---")
 
-                st.caption(
-                    "This overview was generated only "
-                    "from the uploaded study material."
-                )
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "type": "text",
+                    "content": answer,
+                    "mode": study_mode,
+                }
+            )
 
 
         except Exception as error:
 
-            answer = (
-                "I encountered an error while "
-                "analyzing the document."
+            st.error(
+                f"AI service error: "
+                f"{error}"
             )
 
 
-            with st.chat_message(
-                "assistant"
-            ):
-
-                st.error(
-                    answer
-                )
-
-                st.code(
-                    str(error)
-                )
-
-
     # =====================================================
-    # SOURCE RETRIEVAL + GROUNDED ANSWER
+    # RETRIEVAL
     # =====================================================
 
     else:
@@ -616,7 +1009,7 @@ if question:
 
             results = (
                 retrieve_relevant_chunks(
-                    question=question,
+                    question=student_input,
                     document=(
                         st.session_state.document
                     ),
@@ -625,18 +1018,13 @@ if question:
             )
 
 
-        # -------------------------------------------------
-        # NO RELEVANT EVIDENCE
-        # -------------------------------------------------
-
         if not results:
 
             answer = (
-                "I don't have enough information in your "
-                "uploaded study material to answer this "
-                "question confidently."
+                "I don't have enough information "
+                "in your uploaded study material "
+                "to support this activity confidently."
             )
-
 
             with st.chat_message(
                 "assistant"
@@ -646,223 +1034,345 @@ if question:
                     answer
                 )
 
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "type": "text",
+                    "content": answer,
+                    "mode": study_mode,
+                }
+            )
 
-        # -------------------------------------------------
-        # GENERATE GROUNDED ANSWER
-        # -------------------------------------------------
 
         else:
 
             try:
 
-                with st.spinner(
-                    "Creating a source-grounded explanation..."
-                ):
+                # =========================================
+                # FLASHCARDS
+                # =========================================
 
-                    answer = (
-                        generate_grounded_answer(
-                            question=question,
-                            results=results,
-                            answer_depth=answer_depth,
-                        )
-                    )
+                if study_mode == "Flashcards":
 
+                    with st.spinner(
+                        "Building your flashcards..."
+                    ):
 
-                with st.chat_message(
-                    "assistant"
-                ):
-
-                    # -------------------------------------
-                    # ANSWER
-                    # -------------------------------------
-
-                    st.markdown(
-                        "### 🧠 Grounded Answer"
-                    )
-
-                    st.markdown(
-                        answer
-                    )
-
-
-                    # -------------------------------------
-                    # SUPPORTING EVIDENCE
-                    # -------------------------------------
-
-                    if sources_enabled:
-
-                        st.markdown("---")
-
-                        st.markdown(
-                            "### 📚 Supporting Evidence"
+                        cards = (
+                            generate_flashcards(
+                                student_input=(
+                                    student_input
+                                ),
+                                results=results,
+                            )
                         )
 
 
-                        for number, result in enumerate(
-                            results,
-                            start=1,
-                        ):
+                    with st.chat_message(
+                        "assistant"
+                    ):
 
-                            similarity = (
-                                result["score"]
-                                * 100
+                        render_flashcards(
+                            cards,
+                            key_prefix=(
+                                f"new_"
+                                f"{len(st.session_state.messages)}"
+                            ),
+                        )
+
+
+                        if sources_enabled:
+
+                            render_sources(
+                                results,
+                                explanation_enabled,
                             )
 
 
-                            with st.expander(
-                                f"Source {number} "
-                                f"· Page {result['page']} "
-                                f"· Similarity "
-                                f"{similarity:.1f}%"
-                            ):
-
-                                st.write(
-                                    result["text"]
-                                )
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "flashcards",
+                            "cards": cards,
+                            "mode": study_mode,
+                        }
+                    )
 
 
-                                if explanation_enabled:
+                # =========================================
+                # QUIZ
+                # =========================================
 
-                                    st.caption(
-                                        "Why this passage? "
-                                        "The retrieval system "
-                                        "identified this section "
-                                        "as relevant to the student's "
-                                        "question based on textual "
-                                        "similarity."
-                                    )
+                elif study_mode == "Quiz Me":
+
+                    with st.spinner(
+                        "Building your quiz..."
+                    ):
+
+                        questions = (
+                            generate_quiz(
+                                student_input=(
+                                    student_input
+                                ),
+                                results=results,
+                            )
+                        )
 
 
-                    # -------------------------------------
-                    # TRANSPARENCY NOTICE
-                    # -------------------------------------
+                    with st.chat_message(
+                        "assistant"
+                    ):
 
-                    st.markdown("---")
+                        render_quiz(
+                            questions,
+                            key_prefix=(
+                                f"new_"
+                                f"{len(st.session_state.messages)}"
+                            ),
+                        )
 
-                    st.caption(
-                        "This answer was generated using "
-                        "retrieved passages from the uploaded "
-                        "study material. Students should still "
-                        "review the original source before "
-                        "relying on the answer."
+
+                        if sources_enabled:
+
+                            render_sources(
+                                results,
+                                explanation_enabled,
+                            )
+
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "quiz",
+                            "questions": questions,
+                            "mode": study_mode,
+                        }
+                    )
+
+
+                # =========================================
+                # NORMAL QUESTION
+                # =========================================
+
+                elif study_mode == "Ask Question":
+
+                    with st.spinner(
+                        "Creating a grounded explanation..."
+                    ):
+
+                        answer = (
+                            generate_grounded_answer(
+                                question=student_input,
+                                results=results,
+                                answer_depth=(
+                                    answer_depth
+                                ),
+                            )
+                        )
+
+
+                    with st.chat_message(
+                        "assistant"
+                    ):
+
+                        st.markdown(
+                            "### 🧠 Grounded Answer"
+                        )
+
+                        st.markdown(
+                            answer
+                        )
+
+                        if sources_enabled:
+
+                            render_sources(
+                                results,
+                                explanation_enabled,
+                            )
+
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "text",
+                            "content": answer,
+                            "mode": study_mode,
+                        }
+                    )
+
+
+                # =========================================
+                # OTHER LEARNING TOOLS
+                # =========================================
+
+                else:
+
+                    with st.spinner(
+                        f"Creating "
+                        f"{study_mode}..."
+                    ):
+
+                        answer = (
+                            generate_study_tool(
+                                student_input=(
+                                    student_input
+                                ),
+                                results=results,
+                                study_mode=(
+                                    study_mode
+                                ),
+                                answer_depth=(
+                                    answer_depth
+                                ),
+                            )
+                        )
+
+
+                    with st.chat_message(
+                        "assistant"
+                    ):
+
+                        st.markdown(
+                            answer
+                        )
+
+
+                        if sources_enabled:
+
+                            render_sources(
+                                results,
+                                explanation_enabled,
+                            )
+
+
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "text",
+                            "content": answer,
+                            "mode": study_mode,
+                        }
                     )
 
 
             except Exception as error:
 
-                answer = (
-                    "The AI service encountered an error."
+                st.error(
+                    "The AI service encountered "
+                    "an error."
+                )
+
+                st.code(
+                    str(error)
                 )
 
 
-                with st.chat_message(
-                    "assistant"
-                ):
-
-                    st.error(
-                        answer
-                    )
-
-                    st.code(
-                        str(error)
-                    )
-
-
     # =====================================================
-    # SAVE ASSISTANT RESPONSE
+    # FEEDBACK
     # =====================================================
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer,
-        }
-    )
-
-
-    # =====================================================
-    # RESEARCH FEEDBACK
-    # =====================================================
-
-    if answer:
+    if (
+        st.session_state.document
+        and api_key_available()
+    ):
 
         st.markdown(
-            "### 📊 Evaluate This Response"
-        )
-
-        st.caption(
-            "These controls will later support research "
-            "on transparency, trust, usefulness, and "
-            "learner agency."
+            "### 📊 Learning Experience"
         )
 
 
-        feedback1, feedback2, feedback3 = (
-            st.columns(3)
-        )
+        with st.container(
+            border=True
+        ):
 
-
-        interaction_id = len(
-            st.session_state.messages
-        )
-
-
-        with feedback1:
-
-            st.slider(
-                "Usefulness",
-                min_value=1,
-                max_value=5,
-                value=3,
-                key=(
-                    f"usefulness_"
-                    f"{interaction_id}"
-                ),
+            st.caption(
+                "Help evaluate how AI transparency "
+                "and learner control affect your experience."
             )
 
 
-        with feedback2:
-
-            st.slider(
-                "Trust",
-                min_value=1,
-                max_value=5,
-                value=3,
-                key=(
-                    f"trust_"
-                    f"{interaction_id}"
-                ),
+            interaction_id = (
+                len(
+                    st.session_state.messages
+                )
             )
 
 
-        with feedback3:
+            col1, col2 = st.columns(2)
 
-            st.slider(
-                "Clarity",
-                min_value=1,
-                max_value=5,
-                value=3,
+            col3, col4 = st.columns(2)
+
+
+            with col1:
+
+                st.slider(
+                    "Usefulness",
+                    1,
+                    5,
+                    3,
+                    key=(
+                        f"usefulness_"
+                        f"{interaction_id}"
+                    ),
+                )
+
+
+            with col2:
+
+                st.slider(
+                    "Trust",
+                    1,
+                    5,
+                    3,
+                    key=(
+                        f"trust_"
+                        f"{interaction_id}"
+                    ),
+                )
+
+
+            with col3:
+
+                st.slider(
+                    "Clarity",
+                    1,
+                    5,
+                    3,
+                    key=(
+                        f"clarity_"
+                        f"{interaction_id}"
+                    ),
+                )
+
+
+            with col4:
+
+                st.slider(
+                    "Sense of Control",
+                    1,
+                    5,
+                    3,
+                    key=(
+                        f"control_"
+                        f"{interaction_id}"
+                    ),
+                )
+
+
+            st.radio(
+                "Did this learning mode help "
+                "you stay actively involved?",
+                [
+                    "Yes",
+                    "No",
+                    "Not sure",
+                ],
+                horizontal=True,
                 key=(
-                    f"clarity_"
+                    f"agency_"
                     f"{interaction_id}"
                 ),
             )
-
-
-        st.radio(
-            "Did the transparency of this response "
-            "help you evaluate the AI's answer?",
-            [
-                "Yes",
-                "No",
-                "Not sure",
-            ],
-            horizontal=True,
-            key=(
-                f"transparency_"
-                f"{interaction_id}"
-            ),
-        )
 
 
 # =========================================================
@@ -874,6 +1384,7 @@ st.divider()
 st.caption(
     "AI Study Buddy 2.0 · "
     "Human-Centered AI · "
+    "Learner Agency · "
     "Source-Grounded Learning · "
     "Responsible AI · "
     "Josaphat Boesinga"
