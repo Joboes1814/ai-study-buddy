@@ -25,9 +25,18 @@ from ai_service import (
     DEFAULT_MODEL,
 )
 
+from evaluation import (
+    create_session_id,
+    create_interaction_id,
+    build_interaction_metadata,
+    build_feedback_record,
+    records_to_csv,
+    evaluation_summary,
+)
+
 
 # =========================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # =========================================================
 
 st.set_page_config(
@@ -50,18 +59,41 @@ if "document" not in st.session_state:
 if "document_name" not in st.session_state:
     st.session_state.document_name = None
 
+if "evaluation_records" not in st.session_state:
+    st.session_state.evaluation_records = []
 
-# =========================================================
-# HELPERS
-# =========================================================
+if "evaluated_interactions" not in st.session_state:
+    st.session_state.evaluated_interactions = set()
 
-def is_document_overview_question(
-    question
-):
-
-    question = (
-        question.lower().strip()
+if "research_session_id" not in st.session_state:
+    st.session_state.research_session_id = (
+        create_session_id()
     )
+
+if "evaluation_saved_message" not in st.session_state:
+    st.session_state.evaluation_saved_message = False
+
+
+# =========================================================
+# SAVE CONFIRMATION AFTER RERUN
+# =========================================================
+
+if st.session_state.evaluation_saved_message:
+
+    st.success(
+        "✅ Evaluation saved successfully."
+    )
+
+    st.session_state.evaluation_saved_message = False
+
+
+# =========================================================
+# HELPER FUNCTIONS
+# =========================================================
+
+def is_document_overview_question(question):
+
+    question = question.lower().strip()
 
     phrases = [
         "what is this document about",
@@ -87,22 +119,19 @@ def is_document_overview_question(
     )
 
 
-def study_mode_description(
-    mode
-):
+def study_mode_description(mode):
 
     descriptions = {
-
         "Ask Question":
             "Ask a direct question and receive "
             "a source-grounded explanation.",
 
         "Hint Mode":
-            "Receive guidance without immediately "
-            "being given the answer.",
+            "Receive progressive guidance without "
+            "immediately receiving the complete answer.",
 
         "Explain Simply":
-            "Turn difficult material into a clear, "
+            "Turn difficult material into a clear "
             "student-friendly explanation.",
 
         "Quiz Me":
@@ -121,12 +150,9 @@ def study_mode_description(
     return descriptions[mode]
 
 
-def input_placeholder(
-    mode
-):
+def input_placeholder(mode):
 
     placeholders = {
-
         "Ask Question":
             "Ask a question about your study material...",
 
@@ -192,20 +218,12 @@ def render_flashcards(
 
         for offset in range(2):
 
-            card_index = (
-                index + offset
-            )
-
+            card_index = index + offset
 
             if card_index >= len(cards):
                 continue
 
-
-            card = (
-                cards[
-                    card_index
-                ]
-            )
+            card = cards[card_index]
 
 
             with columns[offset]:
@@ -215,8 +233,7 @@ def render_flashcards(
                 ):
 
                     st.caption(
-                        f"FLASHCARD "
-                        f"{card_index + 1}"
+                        f"FLASHCARD {card_index + 1}"
                     )
 
                     st.markdown(
@@ -227,18 +244,12 @@ def render_flashcards(
 
 
                     with st.expander(
-                        "👁️ Reveal answer",
+                        f"👁️ Reveal answer · Card {card_index + 1}",
                         expanded=False,
-                        key=(
-                            f"{key_prefix}_"
-                            f"card_{card_index}"
-                        ),
                     ):
 
                         st.markdown(
-                            card[
-                                "back"
-                            ]
+                            card["back"]
                         )
 
                         st.divider()
@@ -298,18 +309,12 @@ def render_quiz(
 
 
             with st.expander(
-                "✅ Check answer",
+                f"✅ Check answer · Question {index + 1}",
                 expanded=False,
-                key=(
-                    f"{key_prefix}_"
-                    f"quiz_{index}"
-                ),
             ):
 
                 st.markdown(
-                    item[
-                        "answer"
-                    ]
+                    item["answer"]
                 )
 
                 st.divider()
@@ -323,7 +328,7 @@ def render_quiz(
 
 
 # =========================================================
-# SUPPORTING EVIDENCE
+# SUPPORTING SOURCES
 # =========================================================
 
 def render_sources(
@@ -360,18 +365,299 @@ def render_sources(
                 result["text"]
             )
 
+
             if explanation_enabled:
 
                 st.caption(
-                    "This passage was selected "
-                    "because the retrieval system "
-                    "identified textual similarity "
-                    "with the learner's request."
+                    "This passage was selected because "
+                    "the retrieval system identified "
+                    "textual similarity with the "
+                    "learner's request."
                 )
+
 
             if number < len(results):
 
                 st.divider()
+
+
+# =========================================================
+# FEEDBACK FORM
+# =========================================================
+
+def render_feedback_form(message):
+
+    interaction_id = message.get(
+        "interaction_id"
+    )
+
+    if not interaction_id:
+        return
+
+
+    if not message.get(
+        "evaluation_eligible",
+        False,
+    ):
+        return
+
+
+    # -----------------------------------------------------
+    # ALREADY EVALUATED
+    # -----------------------------------------------------
+
+    if (
+        interaction_id
+        in st.session_state.evaluated_interactions
+    ):
+
+        st.success(
+            "✅ Evaluation recorded for this interaction."
+        )
+
+        return
+
+
+    metadata = message.get(
+        "evaluation_metadata"
+    )
+
+    if not metadata:
+        return
+
+
+    st.markdown(
+        "### 📊 Evaluate This Learning Experience"
+    )
+
+    st.caption(
+        "Your ratings help evaluate how transparency, "
+        "source grounding, and learner control "
+        "influence the learning experience."
+    )
+
+
+    with st.form(
+        key=(
+            f"evaluation_form_"
+            f"{interaction_id}"
+        )
+    ):
+
+        col1, col2 = st.columns(2)
+
+        col3, col4 = st.columns(2)
+
+
+        with col1:
+
+            usefulness = st.slider(
+                "Usefulness",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help=(
+                    "How useful was this response "
+                    "for your learning?"
+                ),
+            )
+
+
+        with col2:
+
+            trust = st.slider(
+                "Trust",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help=(
+                    "How much did you trust "
+                    "this AI response?"
+                ),
+            )
+
+
+        with col3:
+
+            clarity = st.slider(
+                "Clarity",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help=(
+                    "How clear and understandable "
+                    "was the response?"
+                ),
+            )
+
+
+        with col4:
+
+            sense_of_control = st.slider(
+                "Sense of Control",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help=(
+                    "How much control did you feel "
+                    "you had over your learning?"
+                ),
+            )
+
+
+        active_involvement = st.radio(
+            "Did this mode help you stay actively "
+            "involved in learning?",
+            [
+                "Yes",
+                "No",
+                "Not sure",
+            ],
+            horizontal=True,
+        )
+
+
+        notes = st.text_area(
+            "Optional comment",
+            placeholder=(
+                "What helped you? "
+                "What could be improved?"
+            ),
+        )
+
+
+        submitted = st.form_submit_button(
+            "Save Evaluation"
+        )
+
+
+    # -----------------------------------------------------
+    # SAVE DATA
+    # -----------------------------------------------------
+
+    if submitted:
+
+        feedback_record = (
+            build_feedback_record(
+                metadata=metadata,
+                usefulness=usefulness,
+                trust=trust,
+                clarity=clarity,
+                sense_of_control=(
+                    sense_of_control
+                ),
+                active_involvement=(
+                    active_involvement
+                ),
+                notes=notes,
+            )
+        )
+
+
+        st.session_state.evaluation_records.append(
+            feedback_record
+        )
+
+
+        st.session_state.evaluated_interactions.add(
+            interaction_id
+        )
+
+
+        st.session_state.evaluation_saved_message = True
+
+
+        # IMPORTANT:
+        # Restart the app so the sidebar immediately
+        # recalculates the evaluation counter.
+        st.rerun()
+
+
+# =========================================================
+# CREATE ASSISTANT MESSAGE
+# =========================================================
+
+def create_assistant_message(
+    response_type,
+    study_mode,
+    student_input,
+    results,
+    answer_depth,
+    top_k,
+    sources_enabled,
+    explanation_enabled,
+    record_student_input,
+    content="",
+    cards=None,
+    questions=None,
+    evaluation_eligible=True,
+):
+
+    interaction_id = (
+        create_interaction_id()
+    )
+
+
+    metadata = (
+        build_interaction_metadata(
+            session_id=(
+                st.session_state
+                .research_session_id
+            ),
+            interaction_id=interaction_id,
+            study_mode=study_mode,
+            response_type=response_type,
+            document_name=(
+                st.session_state
+                .document_name
+            ),
+            answer_depth=answer_depth,
+            top_k=top_k,
+            results=results,
+            sources_visible=(
+                sources_enabled
+            ),
+            source_explanation_enabled=(
+                explanation_enabled
+            ),
+            student_input=(
+                student_input
+            ),
+            record_student_input=(
+                record_student_input
+            ),
+        )
+    )
+
+
+    return {
+        "role":
+            "assistant",
+
+        "type":
+            response_type,
+
+        "content":
+            content,
+
+        "cards":
+            cards or [],
+
+        "questions":
+            questions or [],
+
+        "mode":
+            study_mode,
+
+        "interaction_id":
+            interaction_id,
+
+        "evaluation_eligible":
+            evaluation_eligible,
+
+        "evaluation_metadata":
+            metadata,
+    }
 
 
 # =========================================================
@@ -385,8 +671,7 @@ with st.sidebar:
     )
 
     st.caption(
-        "You decide how AI supports "
-        "your learning."
+        "You decide how AI supports your learning."
     )
 
     st.divider()
@@ -400,6 +685,7 @@ with st.sidebar:
         "🎯 Study Mode"
     )
 
+
     study_mode = st.selectbox(
         "How would you like to learn?",
         [
@@ -412,6 +698,7 @@ with st.sidebar:
         ],
     )
 
+
     st.caption(
         study_mode_description(
             study_mode
@@ -420,7 +707,7 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # RESPONSE CONTROLS
+    # LEARNING PREFERENCES
     # -----------------------------------------------------
 
     st.divider()
@@ -428,6 +715,7 @@ with st.sidebar:
     st.subheader(
         "⚙️ Learning Preferences"
     )
+
 
     answer_depth = st.selectbox(
         "Answer style",
@@ -439,15 +727,18 @@ with st.sidebar:
         index=1,
     )
 
+
     explanation_enabled = st.toggle(
         "Explain source selection",
         value=True,
     )
 
+
     sources_enabled = st.toggle(
         "Show supporting sources",
         value=True,
     )
+
 
     top_k = st.slider(
         "Number of source passages",
@@ -466,6 +757,7 @@ with st.sidebar:
     st.subheader(
         "📄 Study Material"
     )
+
 
     uploaded_file = st.file_uploader(
         "Upload PDF or TXT",
@@ -495,6 +787,7 @@ with st.sidebar:
                         )
                     )
 
+
                 st.session_state.document = (
                     document
                 )
@@ -502,6 +795,7 @@ with st.sidebar:
                 st.session_state.document_name = (
                     uploaded_file.name
                 )
+
 
             except Exception as error:
 
@@ -517,10 +811,12 @@ with st.sidebar:
             st.session_state.document
         )
 
+
         st.success(
             f"Loaded: "
             f"{st.session_state.document_name}"
         )
+
 
         st.caption(
             f"{document['page_count']} page(s)"
@@ -546,7 +842,9 @@ with st.sidebar:
         ):
 
             st.session_state.document = None
+
             st.session_state.document_name = None
+
             st.session_state.messages = []
 
             st.rerun()
@@ -570,9 +868,9 @@ with st.sidebar:
         )
 
         st.caption(
-            f"Model: "
-            f"{DEFAULT_MODEL}"
+            f"Model: {DEFAULT_MODEL}"
         )
+
 
     else:
 
@@ -582,19 +880,36 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # RESEARCH
+    # RESEARCH EVALUATION
     # -----------------------------------------------------
 
     st.divider()
 
     st.subheader(
-        "🔬 Research Mode"
+        "🔬 Research Evaluation"
     )
 
+
     st.caption(
-        "Studying transparency, trust, "
-        "usefulness, and learner agency."
+        "Session ID"
     )
+
+
+    st.code(
+        st.session_state
+        .research_session_id
+    )
+
+
+    record_student_input = st.toggle(
+        "Include student prompts in evaluation data",
+        value=False,
+        help=(
+            "When disabled, the CSV does not "
+            "store the learner's exact prompt."
+        ),
+    )
+
 
     with st.expander(
         "Research question"
@@ -604,6 +919,113 @@ with st.sidebar:
             RESEARCH_QUESTION
         )
 
+
+    # -----------------------------------------------------
+    # EVALUATION COUNTER
+    # -----------------------------------------------------
+
+    evaluation_count = len(
+        st.session_state
+        .evaluation_records
+    )
+
+
+    st.metric(
+        "Evaluated Interactions",
+        evaluation_count,
+    )
+
+
+    # -----------------------------------------------------
+    # SESSION SUMMARY
+    # -----------------------------------------------------
+
+    if evaluation_count > 0:
+
+        summary = (
+            evaluation_summary(
+                st.session_state
+                .evaluation_records
+            )
+        )
+
+
+        st.caption(
+            "Session averages"
+        )
+
+
+        summary1, summary2 = (
+            st.columns(2)
+        )
+
+
+        with summary1:
+
+            st.metric(
+                "Usefulness",
+                f"{summary['usefulness']:.2f}",
+            )
+
+            st.metric(
+                "Clarity",
+                f"{summary['clarity']:.2f}",
+            )
+
+
+        with summary2:
+
+            st.metric(
+                "Trust",
+                f"{summary['trust']:.2f}",
+            )
+
+            st.metric(
+                "Control",
+                f"{summary['sense_of_control']:.2f}",
+            )
+
+
+        # -------------------------------------------------
+        # CSV EXPORT
+        # -------------------------------------------------
+
+        csv_data = (
+            records_to_csv(
+                st.session_state
+                .evaluation_records
+            )
+        )
+
+
+        st.download_button(
+            "⬇️ Export Evaluation CSV",
+            data=csv_data,
+            file_name=(
+                "ai_study_buddy_"
+                f"{st.session_state.research_session_id}"
+                "_evaluation.csv"
+            ),
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
+        if st.button(
+            "Clear Evaluation Data",
+            use_container_width=True,
+        ):
+
+            st.session_state.evaluation_records = []
+
+            st.session_state.evaluated_interactions = set()
+
+            st.rerun()
+
+
+    # -----------------------------------------------------
+    # CLEAR CHAT
+    # -----------------------------------------------------
 
     st.divider()
 
@@ -641,7 +1063,7 @@ st.warning(
 
 
 # =========================================================
-# STATUS AREA
+# STATUS CARDS
 # =========================================================
 
 status1, status2, status3, status4 = (
@@ -656,7 +1078,7 @@ with status1:
 
     st.metric(
         "Development Stage",
-        "Milestone 7",
+        "Version 1.0",
     )
 
 
@@ -696,7 +1118,7 @@ st.divider()
 
 
 # =========================================================
-# MODE PANEL
+# CURRENT STUDY MODE
 # =========================================================
 
 with st.container(
@@ -706,6 +1128,7 @@ with st.container(
     st.markdown(
         f"## 🎯 {study_mode}"
     )
+
 
     st.write(
         study_mode_description(
@@ -717,7 +1140,7 @@ with st.container(
     if study_mode == "Flashcards":
 
         st.info(
-            "Try to answer each card yourself "
+            "Try answering each card yourself "
             "before revealing the back."
         )
 
@@ -725,8 +1148,8 @@ with st.container(
     elif study_mode == "Quiz Me":
 
         st.info(
-            "Answers stay hidden until you choose "
-            "to reveal them."
+            "Answers remain hidden until "
+            "you choose to reveal them."
         )
 
 
@@ -734,8 +1157,8 @@ with st.container(
 
         st.info(
             "Study Buddy will guide you with "
-            "progressive hints instead of immediately "
-            "giving you the answer."
+            "progressive hints rather than immediately "
+            "giving you the complete answer."
         )
 
 
@@ -746,7 +1169,7 @@ with st.container(
         st.info(
             "Explain the concept in your own words. "
             "Study Buddy will compare your explanation "
-            "with your uploaded material."
+            "with the uploaded material."
         )
 
 
@@ -760,16 +1183,18 @@ if st.session_state.document:
         st.session_state.document
     )
 
+
     st.success(
         f"📄 **{st.session_state.document_name}** "
         f"· {document['page_count']} page(s)"
     )
 
+
 else:
 
     st.info(
-        "Upload study material from the "
-        "sidebar to begin."
+        "Upload study material from "
+        "the sidebar to begin."
     )
 
 
@@ -788,35 +1213,51 @@ for message_index, message in enumerate(
         message["role"]
     ):
 
-        message_type = (
-            message.get(
-                "type",
-                "text",
-            )
+        message_type = message.get(
+            "type",
+            "text",
         )
 
+
+        # -------------------------------------------------
+        # FLASHCARD HISTORY
+        # -------------------------------------------------
 
         if message_type == "flashcards":
 
             render_flashcards(
-                message["cards"],
+                message.get(
+                    "cards",
+                    [],
+                ),
                 key_prefix=(
                     f"history_"
                     f"{message_index}"
                 ),
             )
 
+
+        # -------------------------------------------------
+        # QUIZ HISTORY
+        # -------------------------------------------------
 
         elif message_type == "quiz":
 
             render_quiz(
-                message["questions"],
+                message.get(
+                    "questions",
+                    [],
+                ),
                 key_prefix=(
                     f"history_"
                     f"{message_index}"
                 ),
             )
 
+
+        # -------------------------------------------------
+        # TEXT HISTORY
+        # -------------------------------------------------
 
         else:
 
@@ -831,8 +1272,26 @@ for message_index, message in enumerate(
                     f"{message['mode']}"
                 )
 
+
             st.markdown(
-                message["content"]
+                message.get(
+                    "content",
+                    "",
+                )
+            )
+
+
+        # -------------------------------------------------
+        # FEEDBACK FORM
+        # -------------------------------------------------
+
+        if (
+            message["role"]
+            == "assistant"
+        ):
+
+            render_feedback_form(
+                message
             )
 
 
@@ -850,7 +1309,7 @@ student_input = st.chat_input(
 if student_input:
 
     # -----------------------------------------------------
-    # USER MESSAGE
+    # SAVE USER MESSAGE
     # -----------------------------------------------------
 
     st.session_state.messages.append(
@@ -873,7 +1332,7 @@ if student_input:
 
     results = []
 
-    answer = ""
+    assistant_message = None
 
 
     # =====================================================
@@ -887,6 +1346,7 @@ if student_input:
             "study document first."
         )
 
+
         with st.chat_message(
             "assistant"
         ):
@@ -895,13 +1355,27 @@ if student_input:
                 answer
             )
 
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "type": "text",
-                "content": answer,
-                "mode": study_mode,
-            }
+
+        assistant_message = (
+            create_assistant_message(
+                response_type="text",
+                study_mode=study_mode,
+                student_input=student_input,
+                results=[],
+                answer_depth=answer_depth,
+                top_k=top_k,
+                sources_enabled=(
+                    sources_enabled
+                ),
+                explanation_enabled=(
+                    explanation_enabled
+                ),
+                record_student_input=(
+                    record_student_input
+                ),
+                content=answer,
+                evaluation_eligible=False,
+            )
         )
 
 
@@ -912,9 +1386,9 @@ if student_input:
     elif not api_key_available():
 
         answer = (
-            "🔑 The OpenAI API "
-            "is not connected."
+            "🔑 The OpenAI API is not connected."
         )
+
 
         with st.chat_message(
             "assistant"
@@ -924,13 +1398,27 @@ if student_input:
                 answer
             )
 
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "type": "text",
-                "content": answer,
-                "mode": study_mode,
-            }
+
+        assistant_message = (
+            create_assistant_message(
+                response_type="text",
+                study_mode=study_mode,
+                student_input=student_input,
+                results=[],
+                answer_depth=answer_depth,
+                top_k=top_k,
+                sources_enabled=(
+                    sources_enabled
+                ),
+                explanation_enabled=(
+                    explanation_enabled
+                ),
+                record_student_input=(
+                    record_student_input
+                ),
+                content=answer,
+                evaluation_eligible=False,
+            )
         )
 
 
@@ -979,21 +1467,68 @@ if student_input:
                 )
 
 
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "type": "text",
-                    "content": answer,
-                    "mode": study_mode,
-                }
+            assistant_message = (
+                create_assistant_message(
+                    response_type="text",
+                    study_mode=study_mode,
+                    student_input=student_input,
+                    results=[],
+                    answer_depth=answer_depth,
+                    top_k=top_k,
+                    sources_enabled=(
+                        sources_enabled
+                    ),
+                    explanation_enabled=(
+                        explanation_enabled
+                    ),
+                    record_student_input=(
+                        record_student_input
+                    ),
+                    content=answer,
+                )
             )
 
 
         except Exception as error:
 
-            st.error(
-                f"AI service error: "
-                f"{error}"
+            answer = (
+                "The AI service encountered an error."
+            )
+
+
+            with st.chat_message(
+                "assistant"
+            ):
+
+                st.error(
+                    answer
+                )
+
+                st.code(
+                    str(error)
+                )
+
+
+            assistant_message = (
+                create_assistant_message(
+                    response_type="text",
+                    study_mode=study_mode,
+                    student_input=student_input,
+                    results=[],
+                    answer_depth=answer_depth,
+                    top_k=top_k,
+                    sources_enabled=(
+                        sources_enabled
+                    ),
+                    explanation_enabled=(
+                        explanation_enabled
+                    ),
+                    record_student_input=(
+                        record_student_input
+                    ),
+                    content=answer,
+                    evaluation_eligible=False,
+                )
             )
 
 
@@ -1018,6 +1553,10 @@ if student_input:
             )
 
 
+        # -------------------------------------------------
+        # NO EVIDENCE
+        # -------------------------------------------------
+
         if not results:
 
             answer = (
@@ -1025,6 +1564,7 @@ if student_input:
                 "in your uploaded study material "
                 "to support this activity confidently."
             )
+
 
             with st.chat_message(
                 "assistant"
@@ -1034,15 +1574,32 @@ if student_input:
                     answer
                 )
 
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "type": "text",
-                    "content": answer,
-                    "mode": study_mode,
-                }
+
+            assistant_message = (
+                create_assistant_message(
+                    response_type="text",
+                    study_mode=study_mode,
+                    student_input=student_input,
+                    results=[],
+                    answer_depth=answer_depth,
+                    top_k=top_k,
+                    sources_enabled=(
+                        sources_enabled
+                    ),
+                    explanation_enabled=(
+                        explanation_enabled
+                    ),
+                    record_student_input=(
+                        record_student_input
+                    ),
+                    content=answer,
+                )
             )
 
+
+        # -------------------------------------------------
+        # EVIDENCE FOUND
+        # -------------------------------------------------
 
         else:
 
@@ -1089,13 +1646,25 @@ if student_input:
                             )
 
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "flashcards",
-                            "cards": cards,
-                            "mode": study_mode,
-                        }
+                    assistant_message = (
+                        create_assistant_message(
+                            response_type="flashcards",
+                            study_mode=study_mode,
+                            student_input=student_input,
+                            results=results,
+                            answer_depth=answer_depth,
+                            top_k=top_k,
+                            sources_enabled=(
+                                sources_enabled
+                            ),
+                            explanation_enabled=(
+                                explanation_enabled
+                            ),
+                            record_student_input=(
+                                record_student_input
+                            ),
+                            cards=cards,
+                        )
                     )
 
 
@@ -1140,13 +1709,25 @@ if student_input:
                             )
 
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "quiz",
-                            "questions": questions,
-                            "mode": study_mode,
-                        }
+                    assistant_message = (
+                        create_assistant_message(
+                            response_type="quiz",
+                            study_mode=study_mode,
+                            student_input=student_input,
+                            results=results,
+                            answer_depth=answer_depth,
+                            top_k=top_k,
+                            sources_enabled=(
+                                sources_enabled
+                            ),
+                            explanation_enabled=(
+                                explanation_enabled
+                            ),
+                            record_student_input=(
+                                record_student_input
+                            ),
+                            questions=questions,
+                        )
                     )
 
 
@@ -1183,6 +1764,7 @@ if student_input:
                             answer
                         )
 
+
                         if sources_enabled:
 
                             render_sources(
@@ -1191,25 +1773,36 @@ if student_input:
                             )
 
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "text",
-                            "content": answer,
-                            "mode": study_mode,
-                        }
+                    assistant_message = (
+                        create_assistant_message(
+                            response_type="text",
+                            study_mode=study_mode,
+                            student_input=student_input,
+                            results=results,
+                            answer_depth=answer_depth,
+                            top_k=top_k,
+                            sources_enabled=(
+                                sources_enabled
+                            ),
+                            explanation_enabled=(
+                                explanation_enabled
+                            ),
+                            record_student_input=(
+                                record_student_input
+                            ),
+                            content=answer,
+                        )
                     )
 
 
                 # =========================================
-                # OTHER LEARNING TOOLS
+                # HINT / SIMPLE / UNDERSTANDING
                 # =========================================
 
                 else:
 
                     with st.spinner(
-                        f"Creating "
-                        f"{study_mode}..."
+                        f"Creating {study_mode}..."
                     ):
 
                         answer = (
@@ -1245,133 +1838,88 @@ if student_input:
                             )
 
 
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "text",
-                            "content": answer,
-                            "mode": study_mode,
-                        }
+                    assistant_message = (
+                        create_assistant_message(
+                            response_type="text",
+                            study_mode=study_mode,
+                            student_input=student_input,
+                            results=results,
+                            answer_depth=answer_depth,
+                            top_k=top_k,
+                            sources_enabled=(
+                                sources_enabled
+                            ),
+                            explanation_enabled=(
+                                explanation_enabled
+                            ),
+                            record_student_input=(
+                                record_student_input
+                            ),
+                            content=answer,
+                        )
                     )
 
 
             except Exception as error:
 
-                st.error(
-                    "The AI service encountered "
-                    "an error."
+                answer = (
+                    "The AI service encountered an error."
                 )
 
-                st.code(
-                    str(error)
+
+                with st.chat_message(
+                    "assistant"
+                ):
+
+                    st.error(
+                        answer
+                    )
+
+                    st.code(
+                        str(error)
+                    )
+
+
+                assistant_message = (
+                    create_assistant_message(
+                        response_type="text",
+                        study_mode=study_mode,
+                        student_input=student_input,
+                        results=results,
+                        answer_depth=answer_depth,
+                        top_k=top_k,
+                        sources_enabled=(
+                            sources_enabled
+                        ),
+                        explanation_enabled=(
+                            explanation_enabled
+                        ),
+                        record_student_input=(
+                            record_student_input
+                        ),
+                        content=answer,
+                        evaluation_eligible=False,
+                    )
                 )
 
 
     # =====================================================
-    # FEEDBACK
+    # SAVE ASSISTANT MESSAGE
     # =====================================================
 
-    if (
-        st.session_state.document
-        and api_key_available()
-    ):
+    if assistant_message:
 
-        st.markdown(
-            "### 📊 Learning Experience"
+        st.session_state.messages.append(
+            assistant_message
         )
 
 
-        with st.container(
-            border=True
+        with st.chat_message(
+            "assistant"
         ):
 
-            st.caption(
-                "Help evaluate how AI transparency "
-                "and learner control affect your experience."
-            )
-
-
-            interaction_id = (
-                len(
-                    st.session_state.messages
-                )
-            )
-
-
-            col1, col2 = st.columns(2)
-
-            col3, col4 = st.columns(2)
-
-
-            with col1:
-
-                st.slider(
-                    "Usefulness",
-                    1,
-                    5,
-                    3,
-                    key=(
-                        f"usefulness_"
-                        f"{interaction_id}"
-                    ),
-                )
-
-
-            with col2:
-
-                st.slider(
-                    "Trust",
-                    1,
-                    5,
-                    3,
-                    key=(
-                        f"trust_"
-                        f"{interaction_id}"
-                    ),
-                )
-
-
-            with col3:
-
-                st.slider(
-                    "Clarity",
-                    1,
-                    5,
-                    3,
-                    key=(
-                        f"clarity_"
-                        f"{interaction_id}"
-                    ),
-                )
-
-
-            with col4:
-
-                st.slider(
-                    "Sense of Control",
-                    1,
-                    5,
-                    3,
-                    key=(
-                        f"control_"
-                        f"{interaction_id}"
-                    ),
-                )
-
-
-            st.radio(
-                "Did this learning mode help "
-                "you stay actively involved?",
-                [
-                    "Yes",
-                    "No",
-                    "Not sure",
-                ],
-                horizontal=True,
-                key=(
-                    f"agency_"
-                    f"{interaction_id}"
-                ),
+            render_feedback_form(
+                assistant_message
             )
 
 
@@ -1386,6 +1934,7 @@ st.caption(
     "Human-Centered AI · "
     "Learner Agency · "
     "Source-Grounded Learning · "
+    "Research Evaluation · "
     "Responsible AI · "
     "Josaphat Boesinga"
 )
