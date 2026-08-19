@@ -11,10 +11,21 @@ from document_processor import (
     process_uploaded_document,
 )
 
+from retrieval import (
+    retrieve_relevant_chunks,
+)
 
-# ---------------------------------------------------------
+from ai_service import (
+    generate_grounded_answer,
+    generate_document_overview,
+    api_key_available,
+    DEFAULT_MODEL,
+)
+
+
+# =========================================================
 # PAGE CONFIGURATION
-# ---------------------------------------------------------
+# =========================================================
 
 st.set_page_config(
     page_title=APP_NAME,
@@ -23,9 +34,9 @@ st.set_page_config(
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # SESSION STATE
-# ---------------------------------------------------------
+# =========================================================
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -37,110 +48,51 @@ if "document_name" not in st.session_state:
     st.session_state.document_name = None
 
 
-# ---------------------------------------------------------
+# =========================================================
 # HELPER FUNCTIONS
-# ---------------------------------------------------------
+# =========================================================
 
-def generate_prototype_response(
-    question: str,
-    answer_depth: str,
-    explanation_enabled: bool,
-    sources_enabled: bool,
-):
+def is_document_overview_question(question):
     """
-    Temporary response generator.
-
-    Milestone 4 will replace this with
-    document retrieval + grounded answers.
+    Detect questions asking about the uploaded
+    document as a whole.
     """
 
-    if answer_depth == "Brief":
+    question = question.lower().strip()
 
-        response = (
-            f"You asked: **{question}**\n\n"
-            "This is currently a prototype response. "
-            "The document has not yet been searched "
-            "for relevant evidence."
-        )
+    overview_phrases = [
+        "what is this document about",
+        "what is the document about",
+        "what is this document for",
+        "what is the document for",
+        "summarize this document",
+        "summarize the document",
+        "give me a summary",
+        "give me an overview",
+        "what does this document discuss",
+        "what does the document discuss",
+        "what is the purpose of this document",
+        "what is the purpose of the document",
+        "what are the main ideas",
+        "what are the main topics",
+        "tell me about this document",
+    ]
 
-    elif answer_depth == "Detailed":
-
-        response = (
-            f"You asked: **{question}**\n\n"
-            "AI Study Buddy 2.0 is currently operating "
-            "in **Milestone 3 mode**.\n\n"
-            "The application can now accept and process "
-            "study materials. In the next milestone, "
-            "the assistant will retrieve relevant passages "
-            "from the uploaded material and use them to "
-            "support its response."
-        )
-
-    else:
-
-        response = (
-            f"You asked: **{question}**\n\n"
-            "Let's approach this as a learning problem.\n\n"
-            "Your study material can now be uploaded and "
-            "processed. In the next milestone, AI Study Buddy "
-            "will identify the most relevant parts of that "
-            "material and use them to guide your learning."
-        )
+    return any(
+        phrase in question
+        for phrase in overview_phrases
+    )
 
 
-    # -----------------------------------------------------
-    # EXPLAINABILITY
-    # -----------------------------------------------------
-
-    if explanation_enabled:
-
-        response += (
-            "\n\n---\n\n"
-            "### 💡 Why am I showing this response?\n\n"
-            "You enabled the **Explainability** option. "
-            "Future responses will explain which evidence "
-            "was selected from your study material and why "
-            "it was considered relevant."
-        )
-
-
-    # -----------------------------------------------------
-    # SOURCES
-    # -----------------------------------------------------
-
-    if sources_enabled:
-
-        response += "\n\n---\n\n"
-
-        response += "### 📚 Supporting Sources\n\n"
-
-        if st.session_state.document:
-
-            response += (
-                f"Study material loaded: "
-                f"**{st.session_state.document_name}**\n\n"
-                "The document has been processed successfully.\n\n"
-                "Milestone 4 will retrieve and display the "
-                "specific passages most relevant to your question."
-            )
-
-        else:
-
-            response += (
-                "*No study material has been uploaded yet.*\n\n"
-                "Upload a PDF or TXT file from the sidebar."
-            )
-
-    return response
-
-
-# ---------------------------------------------------------
+# =========================================================
 # SIDEBAR
-# ---------------------------------------------------------
+# =========================================================
 
 with st.sidebar:
 
-    st.title("🧠 Study Controls")
+    st.title(
+        "🧠 Study Controls"
+    )
 
     st.write(
         "Customize how AI Study Buddy supports your learning."
@@ -150,7 +102,7 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # RESPONSE SETTINGS
+    # ANSWER SETTINGS
     # -----------------------------------------------------
 
     answer_depth = st.selectbox(
@@ -161,16 +113,14 @@ with st.sidebar:
             "Guided Learning",
         ],
         index=1,
-        help=(
-            "Choose whether you want a short response, "
-            "a detailed explanation, or guided learning."
-        ),
     )
 
+
     explanation_enabled = st.toggle(
-        "Explain the AI response",
+        "Explain source selection",
         value=True,
     )
+
 
     sources_enabled = st.toggle(
         "Show supporting sources",
@@ -178,22 +128,31 @@ with st.sidebar:
     )
 
 
+    top_k = st.slider(
+        "Number of source passages",
+        min_value=1,
+        max_value=5,
+        value=3,
+    )
+
+
     # -----------------------------------------------------
-    # DOCUMENT UPLOAD
+    # STUDY MATERIAL
     # -----------------------------------------------------
 
     st.divider()
 
-    st.subheader("📄 Study Material")
+    st.subheader(
+        "📄 Study Material"
+    )
+
 
     uploaded_file = st.file_uploader(
-        "Upload your study material",
-        type=["pdf", "txt"],
-        help=(
-            "Upload a PDF or TXT file. "
-            "AI Study Buddy will process the document "
-            "for source-grounded learning."
-        ),
+        "Upload PDF or TXT",
+        type=[
+            "pdf",
+            "txt",
+        ],
     )
 
 
@@ -210,15 +169,19 @@ with st.sidebar:
                     "Processing study material..."
                 ):
 
-                    document = process_uploaded_document(
-                        uploaded_file
+                    document = (
+                        process_uploaded_document(
+                            uploaded_file
+                        )
                     )
+
 
                 st.session_state.document = document
 
                 st.session_state.document_name = (
                     uploaded_file.name
                 )
+
 
             except Exception as error:
 
@@ -233,23 +196,23 @@ with st.sidebar:
 
     if st.session_state.document:
 
-        document = st.session_state.document
+        document = (
+            st.session_state.document
+        )
+
 
         st.success(
-            f"Loaded: {st.session_state.document_name}"
+            f"Loaded: "
+            f"{st.session_state.document_name}"
         )
+
 
         st.caption(
             f"{document['page_count']} page(s)"
             f" · "
-            f"{document['character_count']:,} "
-            f"characters extracted"
+            f"{document['character_count']:,} characters"
         )
 
-
-        # -------------------------------------------------
-        # TEXT PREVIEW
-        # -------------------------------------------------
 
         with st.expander(
             "Preview extracted text"
@@ -261,28 +224,28 @@ with st.sidebar:
                     document["full_text"][:3000]
                 )
 
-                st.text(preview)
+                st.text(
+                    preview
+                )
 
-                if len(
-                    document["full_text"]
-                ) > 3000:
+
+                if (
+                    len(document["full_text"])
+                    > 3000
+                ):
 
                     st.caption(
-                        "Preview limited to the "
-                        "first 3,000 characters."
+                        "Preview limited to the first "
+                        "3,000 characters."
                     )
+
 
             else:
 
                 st.warning(
-                    "No readable text was extracted "
-                    "from this document."
+                    "No readable text was extracted."
                 )
 
-
-        # -------------------------------------------------
-        # REMOVE DOCUMENT
-        # -------------------------------------------------
 
         if st.button(
             "Remove Study Material",
@@ -290,10 +253,38 @@ with st.sidebar:
         ):
 
             st.session_state.document = None
-
             st.session_state.document_name = None
 
             st.rerun()
+
+
+    # -----------------------------------------------------
+    # AI CONNECTION
+    # -----------------------------------------------------
+
+    st.divider()
+
+    st.subheader(
+        "🤖 AI Connection"
+    )
+
+
+    if api_key_available():
+
+        st.success(
+            "OpenAI API connected"
+        )
+
+        st.caption(
+            f"Model: {DEFAULT_MODEL}"
+        )
+
+
+    else:
+
+        st.error(
+            "OpenAI API key not configured."
+        )
 
 
     # -----------------------------------------------------
@@ -302,14 +293,18 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("🔬 Research Mode")
-
-    st.caption(
-        "These controls will later help us study "
-        "how transparency affects trust and usefulness."
+    st.subheader(
+        "🔬 Research Mode"
     )
 
-    st.info(RESEARCH_QUESTION)
+    st.caption(
+        "Studying how transparency and source "
+        "grounding influence trust and perceived usefulness."
+    )
+
+    st.info(
+        RESEARCH_QUESTION
+    )
 
 
     # -----------------------------------------------------
@@ -328,50 +323,61 @@ with st.sidebar:
         st.rerun()
 
 
-# ---------------------------------------------------------
+# =========================================================
 # MAIN HEADER
-# ---------------------------------------------------------
+# =========================================================
 
-st.title("🧠 AI Study Buddy 2.0")
+st.title(
+    "🧠 AI Study Buddy 2.0"
+)
 
 st.subheader(
-    "Learn with AI — without giving up control of your learning."
+    "Learn with AI — without giving up "
+    "control of your learning."
 )
 
-st.write(APP_SUBTITLE)
+st.write(
+    APP_SUBTITLE
+)
 
-st.warning(DISCLAIMER)
-
-
-# ---------------------------------------------------------
-# DEVELOPMENT STATUS
-# ---------------------------------------------------------
-
-status_col1, status_col2, status_col3 = (
-    st.columns(3)
+st.warning(
+    DISCLAIMER
 )
 
 
-with status_col1:
+# =========================================================
+# STATUS
+# =========================================================
+
+status1, status2, status3 = st.columns(3)
+
+
+with status1:
 
     st.metric(
         "Development Stage",
-        "Milestone 3",
+        "Milestone 5",
     )
 
 
-with status_col2:
+with status2:
+
+    ai_status = (
+        "Grounded AI"
+        if api_key_available()
+        else "Not Connected"
+    )
 
     st.metric(
         "AI Mode",
-        "Prototype",
+        ai_status,
     )
 
 
-with status_col3:
+with status3:
 
     document_status = (
-        "Document Ready"
+        "Ready"
         if st.session_state.document
         else "No Document"
     )
@@ -385,61 +391,62 @@ with status_col3:
 st.divider()
 
 
-# ---------------------------------------------------------
+# =========================================================
 # INTRODUCTION
-# ---------------------------------------------------------
+# =========================================================
 
-if len(st.session_state.messages) == 0:
+if not st.session_state.messages:
 
     st.markdown(
         """
-        ### Welcome 👋
+        ### Grounded AI Learning Is Active 🤖📚
 
-        AI Study Buddy is being developed as both
-        an educational application and a
-        human-centered AI research project.
+        AI Study Buddy can now:
 
-        **Milestone 3 adds study material processing.**
+        - Read uploaded PDF and TXT study materials
+        - Identify relevant passages
+        - Generate explanations grounded in those passages
+        - Cite supporting evidence
+        - Explain why sources were selected
+        - Summarize the uploaded document
+        - Refuse questions that are unsupported by the material
 
-        You can now:
+        The current workflow is:
 
-        - Upload PDF study material
-        - Upload TXT notes
-        - Extract readable text
-        - Preview the extracted content
-        - Keep the document available during the session
+        **Question → Retrieval → Evidence → Grounded AI Answer**
 
-        Coming next:
+        For document-level questions such as:
 
-        - Search the uploaded document
-        - Retrieve relevant passages
-        - Show evidence with answers
-        - Generate source-grounded explanations
+        *"What is this document about?"*
 
-        **Upload a document from the sidebar and try it.**
+        Study Buddy analyzes the document as a whole.
+
+        For specific questions, Study Buddy retrieves relevant
+        passages before generating an answer.
         """
     )
 
 
-# ---------------------------------------------------------
-# DOCUMENT SUMMARY
-# ---------------------------------------------------------
+# =========================================================
+# CURRENT DOCUMENT
+# =========================================================
 
 if st.session_state.document:
 
-    document = st.session_state.document
+    document = (
+        st.session_state.document
+    )
 
     st.info(
         f"📄 Current study material: "
-        f"**{st.session_state.document_name}**"
-        f" — {document['page_count']} page(s), "
-        f"{document['character_count']:,} characters."
+        f"**{st.session_state.document_name}** "
+        f"· {document['page_count']} page(s)"
     )
 
 
-# ---------------------------------------------------------
-# DISPLAY CHAT HISTORY
-# ---------------------------------------------------------
+# =========================================================
+# CHAT HISTORY
+# =========================================================
 
 for message in st.session_state.messages:
 
@@ -452,19 +459,19 @@ for message in st.session_state.messages:
         )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # CHAT INPUT
-# ---------------------------------------------------------
+# =========================================================
 
 question = st.chat_input(
-    "Ask AI Study Buddy a question..."
+    "Ask a question about your study material..."
 )
 
 
 if question:
 
     # -----------------------------------------------------
-    # SAVE STUDENT QUESTION
+    # SAVE USER QUESTION
     # -----------------------------------------------------
 
     st.session_state.messages.append(
@@ -475,135 +482,399 @@ if question:
     )
 
 
-    # -----------------------------------------------------
-    # DISPLAY STUDENT QUESTION
-    # -----------------------------------------------------
+    with st.chat_message(
+        "user"
+    ):
 
-    with st.chat_message("user"):
-
-        st.markdown(question)
-
-
-    # -----------------------------------------------------
-    # GENERATE RESPONSE
-    # -----------------------------------------------------
-
-    response = generate_prototype_response(
-        question=question,
-        answer_depth=answer_depth,
-        explanation_enabled=explanation_enabled,
-        sources_enabled=sources_enabled,
-    )
+        st.markdown(
+            question
+        )
 
 
-    # -----------------------------------------------------
-    # DISPLAY ASSISTANT RESPONSE
-    # -----------------------------------------------------
-
-    with st.chat_message("assistant"):
-
-        st.markdown(response)
+    # Default values used later
+    results = []
+    answer = ""
 
 
-    # -----------------------------------------------------
+    # =====================================================
+    # REQUIRE DOCUMENT
+    # =====================================================
+
+    if not st.session_state.document:
+
+        answer = (
+            "📄 Please upload a PDF or TXT study document "
+            "before asking a source-grounded question."
+        )
+
+
+        with st.chat_message(
+            "assistant"
+        ):
+
+            st.warning(
+                answer
+            )
+
+
+    # =====================================================
+    # REQUIRE OPENAI CONNECTION
+    # =====================================================
+
+    elif not api_key_available():
+
+        answer = (
+            "🔑 The OpenAI API is not connected. "
+            "Please configure OPENAI_API_KEY."
+        )
+
+
+        with st.chat_message(
+            "assistant"
+        ):
+
+            st.error(
+                answer
+            )
+
+
+    # =====================================================
+    # DOCUMENT OVERVIEW QUESTION
+    # =====================================================
+
+    elif is_document_overview_question(
+        question
+    ):
+
+        try:
+
+            with st.spinner(
+                "Reading the document..."
+            ):
+
+                answer = (
+                    generate_document_overview(
+                        document_text=(
+                            st.session_state
+                            .document["full_text"]
+                        ),
+                        answer_depth=answer_depth,
+                    )
+                )
+
+
+            with st.chat_message(
+                "assistant"
+            ):
+
+                st.markdown(
+                    "### 📄 Document Overview"
+                )
+
+                st.markdown(
+                    answer
+                )
+
+                st.markdown("---")
+
+                st.caption(
+                    "This overview was generated only "
+                    "from the uploaded study material."
+                )
+
+
+        except Exception as error:
+
+            answer = (
+                "I encountered an error while "
+                "analyzing the document."
+            )
+
+
+            with st.chat_message(
+                "assistant"
+            ):
+
+                st.error(
+                    answer
+                )
+
+                st.code(
+                    str(error)
+                )
+
+
+    # =====================================================
+    # SOURCE RETRIEVAL + GROUNDED ANSWER
+    # =====================================================
+
+    else:
+
+        with st.spinner(
+            "Searching your study material..."
+        ):
+
+            results = (
+                retrieve_relevant_chunks(
+                    question=question,
+                    document=(
+                        st.session_state.document
+                    ),
+                    top_k=top_k,
+                )
+            )
+
+
+        # -------------------------------------------------
+        # NO RELEVANT EVIDENCE
+        # -------------------------------------------------
+
+        if not results:
+
+            answer = (
+                "I don't have enough information in your "
+                "uploaded study material to answer this "
+                "question confidently."
+            )
+
+
+            with st.chat_message(
+                "assistant"
+            ):
+
+                st.warning(
+                    answer
+                )
+
+
+        # -------------------------------------------------
+        # GENERATE GROUNDED ANSWER
+        # -------------------------------------------------
+
+        else:
+
+            try:
+
+                with st.spinner(
+                    "Creating a source-grounded explanation..."
+                ):
+
+                    answer = (
+                        generate_grounded_answer(
+                            question=question,
+                            results=results,
+                            answer_depth=answer_depth,
+                        )
+                    )
+
+
+                with st.chat_message(
+                    "assistant"
+                ):
+
+                    # -------------------------------------
+                    # ANSWER
+                    # -------------------------------------
+
+                    st.markdown(
+                        "### 🧠 Grounded Answer"
+                    )
+
+                    st.markdown(
+                        answer
+                    )
+
+
+                    # -------------------------------------
+                    # SUPPORTING EVIDENCE
+                    # -------------------------------------
+
+                    if sources_enabled:
+
+                        st.markdown("---")
+
+                        st.markdown(
+                            "### 📚 Supporting Evidence"
+                        )
+
+
+                        for number, result in enumerate(
+                            results,
+                            start=1,
+                        ):
+
+                            similarity = (
+                                result["score"]
+                                * 100
+                            )
+
+
+                            with st.expander(
+                                f"Source {number} "
+                                f"· Page {result['page']} "
+                                f"· Similarity "
+                                f"{similarity:.1f}%"
+                            ):
+
+                                st.write(
+                                    result["text"]
+                                )
+
+
+                                if explanation_enabled:
+
+                                    st.caption(
+                                        "Why this passage? "
+                                        "The retrieval system "
+                                        "identified this section "
+                                        "as relevant to the student's "
+                                        "question based on textual "
+                                        "similarity."
+                                    )
+
+
+                    # -------------------------------------
+                    # TRANSPARENCY NOTICE
+                    # -------------------------------------
+
+                    st.markdown("---")
+
+                    st.caption(
+                        "This answer was generated using "
+                        "retrieved passages from the uploaded "
+                        "study material. Students should still "
+                        "review the original source before "
+                        "relying on the answer."
+                    )
+
+
+            except Exception as error:
+
+                answer = (
+                    "The AI service encountered an error."
+                )
+
+
+                with st.chat_message(
+                    "assistant"
+                ):
+
+                    st.error(
+                        answer
+                    )
+
+                    st.code(
+                        str(error)
+                    )
+
+
+    # =====================================================
     # SAVE ASSISTANT RESPONSE
-    # -----------------------------------------------------
+    # =====================================================
 
     st.session_state.messages.append(
         {
             "role": "assistant",
-            "content": response,
+            "content": answer,
         }
     )
 
 
-    # -----------------------------------------------------
-    # FEEDBACK
-    # -----------------------------------------------------
+    # =====================================================
+    # RESEARCH FEEDBACK
+    # =====================================================
 
-    st.markdown(
-        "### 📊 Evaluate this response"
-    )
+    if answer:
 
-    st.caption(
-        "Feedback is currently experimental "
-        "and is not being stored."
-    )
+        st.markdown(
+            "### 📊 Evaluate This Response"
+        )
 
-
-    feedback_col1, feedback_col2, feedback_col3 = (
-        st.columns(3)
-    )
+        st.caption(
+            "These controls will later support research "
+            "on transparency, trust, usefulness, and "
+            "learner agency."
+        )
 
 
-    with feedback_col1:
+        feedback1, feedback2, feedback3 = (
+            st.columns(3)
+        )
 
-        st.slider(
-            "Usefulness",
-            min_value=1,
-            max_value=5,
-            value=3,
+
+        interaction_id = len(
+            st.session_state.messages
+        )
+
+
+        with feedback1:
+
+            st.slider(
+                "Usefulness",
+                min_value=1,
+                max_value=5,
+                value=3,
+                key=(
+                    f"usefulness_"
+                    f"{interaction_id}"
+                ),
+            )
+
+
+        with feedback2:
+
+            st.slider(
+                "Trust",
+                min_value=1,
+                max_value=5,
+                value=3,
+                key=(
+                    f"trust_"
+                    f"{interaction_id}"
+                ),
+            )
+
+
+        with feedback3:
+
+            st.slider(
+                "Clarity",
+                min_value=1,
+                max_value=5,
+                value=3,
+                key=(
+                    f"clarity_"
+                    f"{interaction_id}"
+                ),
+            )
+
+
+        st.radio(
+            "Did the transparency of this response "
+            "help you evaluate the AI's answer?",
+            [
+                "Yes",
+                "No",
+                "Not sure",
+            ],
+            horizontal=True,
             key=(
-                f"usefulness_"
-                f"{len(st.session_state.messages)}"
+                f"transparency_"
+                f"{interaction_id}"
             ),
         )
 
 
-    with feedback_col2:
-
-        st.slider(
-            "Trust",
-            min_value=1,
-            max_value=5,
-            value=3,
-            key=(
-                f"trust_"
-                f"{len(st.session_state.messages)}"
-            ),
-        )
-
-
-    with feedback_col3:
-
-        st.slider(
-            "Clarity",
-            min_value=1,
-            max_value=5,
-            value=3,
-            key=(
-                f"clarity_"
-                f"{len(st.session_state.messages)}"
-            ),
-        )
-
-
-    st.radio(
-        "Would supporting evidence help you "
-        "evaluate this answer?",
-        [
-            "Yes",
-            "No",
-            "Not sure",
-        ],
-        horizontal=True,
-        key=(
-            f"source_"
-            f"{len(st.session_state.messages)}"
-        ),
-    )
-
-
-# ---------------------------------------------------------
+# =========================================================
 # FOOTER
-# ---------------------------------------------------------
+# =========================================================
 
 st.divider()
 
 st.caption(
     "AI Study Buddy 2.0 · "
     "Human-Centered AI · "
+    "Source-Grounded Learning · "
     "Responsible AI · "
-    "Education · "
     "Josaphat Boesinga"
 )
