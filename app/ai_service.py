@@ -10,7 +10,7 @@ from openai import OpenAI
 
 DEFAULT_MODEL = os.getenv(
     "OPENAI_MODEL",
-    "gpt-5.6-luna",
+    "gpt-5-mini",
 )
 
 MIN_RELEVANCE_SCORE = 0.05
