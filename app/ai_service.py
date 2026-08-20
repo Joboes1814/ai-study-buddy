@@ -190,6 +190,7 @@ Answer using only the supplied study material.
             model=DEFAULT_MODEL,
             instructions=instructions,
             input=prompt,
+            max_output_tokens=800,
             store=False,
         )
     )
@@ -263,6 +264,7 @@ Provide an educational overview.
             model=DEFAULT_MODEL,
             instructions=instructions,
             input=prompt,
+            max_output_tokens=800,
             store=False,
         )
     )
@@ -416,6 +418,7 @@ RETRIEVED STUDY MATERIAL:
             model=DEFAULT_MODEL,
             instructions=instructions,
             input=prompt,
+            max_output_tokens=800,
             store=False,
         )
     )
@@ -489,6 +492,7 @@ Create five flashcards.
             model=DEFAULT_MODEL,
             instructions=instructions,
             input=prompt,
+            max_output_tokens=800,
             text={
                 "format": {
                     "type": "json_schema",
@@ -666,6 +670,7 @@ Create a three-question quiz.
             model=DEFAULT_MODEL,
             instructions=instructions,
             input=prompt,
+            max_output_tokens=800,
             text={
                 "format": {
                     "type": "json_schema",

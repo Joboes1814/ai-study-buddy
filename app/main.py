@@ -72,7 +72,10 @@ if "research_session_id" not in st.session_state:
 
 if "evaluation_saved_message" not in st.session_state:
     st.session_state.evaluation_saved_message = False
+MAX_AI_REQUESTS_PER_SESSION = 10
 
+if "ai_request_count" not in st.session_state:
+    st.session_state.ai_request_count = 0
 
 # =========================================================
 # SAVE CONFIRMATION AFTER RERUN
@@ -90,6 +93,29 @@ if st.session_state.evaluation_saved_message:
 # =========================================================
 # HELPER FUNCTIONS
 # =========================================================
+def check_ai_usage_limit():
+    """
+    Limit OpenAI-powered actions in each user session.
+    """
+
+    if (
+        st.session_state.ai_request_count
+        >= MAX_AI_REQUESTS_PER_SESSION
+    ):
+        st.error(
+            "🚦 You have reached the AI usage limit "
+            "for this session."
+        )
+
+        st.info(
+            "This limit helps keep AI Study Buddy "
+            "available while protecting API usage."
+        )
+
+        st.stop()
+
+    st.session_state.ai_request_count += 1
+
 
 def is_document_overview_question(question):
 
@@ -767,13 +793,32 @@ with st.sidebar:
         ],
     )
 
+    MAX_UPLOAD_SIZE_MB = 5
 
     if uploaded_file is not None:
+
+        file_size_mb = (
+            uploaded_file.size
+            / (1024 * 1024)
+        )
+
+        if file_size_mb > MAX_UPLOAD_SIZE_MB:
+
+            st.error(
+                f"File is too large. "
+                f"Please upload a file smaller than "
+                f"{MAX_UPLOAD_SIZE_MB} MB."
+            )
+
+            st.stop()
+
 
         if (
             st.session_state.document_name
             != uploaded_file.name
         ):
+
+
 
             try:
 
@@ -1305,8 +1350,16 @@ student_input = st.chat_input(
     )
 )
 
-
+MAX_PROMPT_CHARACTERS = 2000
 if student_input:
+
+    if len(student_input) > MAX_PROMPT_CHARACTERS:
+        st.error(
+            f"Your message is too long. "
+            f"Please keep it under "
+            f"{MAX_PROMPT_CHARACTERS:,} characters."
+        )
+        st.stop()
 
     # -----------------------------------------------------
     # SAVE USER MESSAGE
@@ -1438,7 +1491,7 @@ if student_input:
             with st.spinner(
                 "Reading the document..."
             ):
-
+                check_ai_usage_limit()
                 answer = (
                     generate_document_overview(
                         document_text=(
@@ -1614,7 +1667,7 @@ if student_input:
                     with st.spinner(
                         "Building your flashcards..."
                     ):
-
+                        check_ai_usage_limit()
                         cards = (
                             generate_flashcards(
                                 student_input=(
@@ -1677,7 +1730,7 @@ if student_input:
                     with st.spinner(
                         "Building your quiz..."
                     ):
-
+                        check_ai_usage_limit()
                         questions = (
                             generate_quiz(
                                 student_input=(
@@ -1741,6 +1794,7 @@ if student_input:
                         "Creating a grounded explanation..."
                     ):
 
+                        check_ai_usage_limit()
                         answer = (
                             generate_grounded_answer(
                                 question=student_input,
@@ -1804,7 +1858,7 @@ if student_input:
                     with st.spinner(
                         f"Creating {study_mode}..."
                     ):
-
+                        check_ai_usage_limit()
                         answer = (
                             generate_study_tool(
                                 student_input=(
